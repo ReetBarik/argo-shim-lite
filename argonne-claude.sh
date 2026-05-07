@@ -96,10 +96,13 @@ fi
 echo -e "${GREEN}Local proxy running (port ${PROXY_PORT})!${NC}"
 
 # Step 3: Launch Claude Code
+# Default to the inline renderer — friendlier over multi-hop SSH (e.g. compute
+# nodes), and preserves Claude's output in scrollback. User can override.
 echo -e "${GREEN}Launching Claude Code...${NC}"
 ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}/argoapi/" \
     ANTHROPIC_AUTH_TOKEN=${ARGO_USER:-$USER} \
     CLAUDE_CODE_SKIP_ANTHROPIC_AUTH=1 \
+    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=${CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN:-1} \
     ${CLAUDE_EXECUTABLE}
 
 # The cleanup function will be called automatically by the trap on exit

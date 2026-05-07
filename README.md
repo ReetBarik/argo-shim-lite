@@ -22,9 +22,14 @@ Run Claude Code (and other Anthropic-API-compatible clients) against Argonne's i
    ```bash
    export PATH="$HOME/argo-shim-lite:$PATH"
    ```
-   Reload your shell:
+4. Ensure `~/.bash_profile` sources `~/.bashrc` so login shells (e.g. `qsub -I` interactive jobs on compute nodes) inherit the PATH. Confirm `~/.bash_profile` contains:
    ```bash
-   source ~/.bashrc
+   [ -f ~/.bashrc ] && . ~/.bashrc
+   ```
+   Add it if missing.
+5. Reload your shell:
+   ```bash
+   source ~/.bash_profile
    ```
 
 ### Running from Aurora
