@@ -6,18 +6,21 @@ Run Claude Code (and other Anthropic-API-compatible clients) against Argonne's i
 
 - SSH access to `homes.cels.anl.gov`
 - Python 3.12 with `aiohttp` (`pip install -r requirements.txt`)
-- Claude Code installed ([install instructions](https://docs.anthropic.com/en/docs/claude-code/overview))
+- Claude Code installed:
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ```
 
 ## One-time setup
 
-1. Clone this repo somewhere stable, e.g. `~/src/argo-shim-lite`.
+1. Clone this repo somewhere stable, e.g. `~/argo-shim-lite`.
 2. Install the proxy's Python dependency:
    ```bash
    pip install -r requirements.txt
    ```
 3. Make the launcher callable from anywhere by adding its directory to your `PATH` in `~/.bashrc`:
    ```bash
-   export PATH="$HOME/src/argo-shim-lite:$PATH"
+   export PATH="$HOME/argo-shim-lite:$PATH"
    ```
    Reload your shell:
    ```bash
