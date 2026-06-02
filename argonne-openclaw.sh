@@ -55,7 +55,7 @@ ARGO_IDENTITY="${IDENTITY:-${ARGO_USER:-$USER}}"
 
 # ── Step 1: SSH tunnel on port 8085 ──────────────────────────────────────────
 
-if lsof -i :${TUNNEL_LOCAL_PORT} >/dev/null 2>&1; then
+if lsof -i :${TUNNEL_LOCAL_PORT} | grep -q LISTEN; then
     echo -e "${RED}Port ${TUNNEL_LOCAL_PORT} is already in use.${NC}"
     echo -e "${YELLOW}Check for an existing tunnel: lsof -i :${TUNNEL_LOCAL_PORT}${NC}"
     exit 1
@@ -86,7 +86,7 @@ echo -e "${GREEN}SSH tunnel established (port ${TUNNEL_LOCAL_PORT}).${NC}"
 
 # ── Step 2: OpenClaw proxy on port 8084 ──────────────────────────────────────
 
-if lsof -i :${PROXY_PORT} >/dev/null 2>&1; then
+if lsof -i :${PROXY_PORT} | grep -q LISTEN; then
     echo -e "${RED}Port ${PROXY_PORT} is already in use.${NC}"
     echo -e "${YELLOW}Check for an existing proxy: lsof -i :${PROXY_PORT}${NC}"
     exit 1
