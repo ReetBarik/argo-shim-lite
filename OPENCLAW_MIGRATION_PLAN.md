@@ -17,9 +17,9 @@ infrastructure all carry over unchanged.
 | Phase 2 — Bootstrap files | ✅ Done |
 | Phase 3 — Skills | ✅ Done |
 | Phase 4 — Cutover | ✅ Done (5/5 channels verified) |
-| Phase 5 — Cleanup | ⏳ Pending |
+| Phase 5 — Cleanup | ✅ Done |
 
-**Next step:** Phase 5 cleanup — remove obsolete files.
+**All phases complete.**
 
 ---
 
@@ -143,7 +143,7 @@ summaries, then synthesizes a structured HPC-lens review. No pdfplumber needed.
 
 ---
 
-## Phase 5 — Remove obsolete infrastructure ⏳ (pending peer review verification)
+## Phase 5 — Remove obsolete infrastructure ✅
 
 Once all 5 channels pass:
 
