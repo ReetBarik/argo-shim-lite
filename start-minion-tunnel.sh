@@ -13,7 +13,7 @@ fi
 echo "Starting SSH tunnel to Argo (MFA required)..."
 ssh -f -N \
     -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=10 \
+    -o ServerAliveCountMax=60 \
     -o ControlMaster=yes \
     -o ControlPath="${CONTROL_PATH}" \
     -L 8085:apps.inside.anl.gov:443 \
