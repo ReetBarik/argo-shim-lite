@@ -17,10 +17,11 @@ ssh -f -N \
     -o ControlMaster=yes \
     -o ControlPath="${CONTROL_PATH}" \
     -L 8085:apps.inside.anl.gov:443 \
+    -R 15900:localhost:5900 \
     "${REMOTE_HOST}"
 
 if [ $? -eq 0 ]; then
-    echo "Tunnel up on port 8085."
+    echo "Tunnel up on port 8085 (Argo) and reverse VNC on homes:15900."
 else
     echo "Tunnel failed to start."
     exit 1
