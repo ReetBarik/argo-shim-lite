@@ -1,0 +1,5 @@
+# Ignore all workspace files except skills (which are safe to share)
+*
+!.gitignore
+!skills/
+!skills/**
