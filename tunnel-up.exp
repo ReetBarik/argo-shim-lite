@@ -1,0 +1,19 @@
+#!/usr/bin/expect -f
+# Runs an ssh tunnel (passed as args) in the FOREGROUND, answering the ANL Duo
+# menu with "1" (Duo Push). After auth it blocks on eof, i.e. it holds the ssh
+# process alive for as long as the connection lasts. This is meant to be the main
+# process of a launchd service (com.rbarik.minion-tunnel): launchd keeps it alive,
+# and because ssh stays in the foreground there is no pty to close and SIGHUP it.
+#
+# Usage: expect -f tunnel-up.exp ssh -N -L ... -R ... homes.cels.anl.gov
+set timeout 90
+eval spawn $argv
+expect {
+    -re "Passcode or option" { send "1\r" }
+    "Permission denied"      { exit 1 }
+    timeout                  { exit 2 }
+    eof                      { exit 3 }
+}
+# Auth answered and push approved -- now hold the tunnel open until ssh exits.
+set timeout -1
+expect eof

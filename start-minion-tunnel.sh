@@ -1,28 +1,33 @@
 #!/bin/bash
-# Start the SSH tunnel to Argo. Run once after boot — MFA required.
-# The tunnel stays alive via keepalives; launchd manages the proxy and bot separately.
+# Bring up the Argo SSH tunnel (+ reverse VNC). Duo approval required.
+#
+# Delegates to the launchd service com.rbarik.minion-tunnel so there is a single,
+# headless-safe start path: the service runs `ssh -N` under expect, which answers
+# the Duo menu for you -- you just approve the push on your phone. Works the same
+# whether run by hand, by the tunnel skill, or by the watchdog (tunnel-healthcheck.sh).
+#
+# Exits 0 once the tunnel is confirmed up, non-zero if it did not come up in time.
 
 CONTROL_PATH="/tmp/ssh-argo-minion"
 REMOTE_HOST="homes.cels.anl.gov"
+TUNNEL_LABEL="com.rbarik.minion-tunnel"
 
 if ssh -O check -o ControlPath="${CONTROL_PATH}" "${REMOTE_HOST}" 2>/dev/null; then
     echo "Tunnel already running on port 8085."
     exit 0
 fi
 
-echo "Starting SSH tunnel to Argo (MFA required)..."
-ssh -f -N \
-    -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=60 \
-    -o ControlMaster=yes \
-    -o ControlPath="${CONTROL_PATH}" \
-    -L 8085:apps.inside.anl.gov:443 \
-    -R 15900:localhost:5900 \
-    "${REMOTE_HOST}"
+echo "Starting Argo tunnel via launchd service (approve the Duo push on your phone)..."
+launchctl kickstart "gui/$(id -u)/${TUNNEL_LABEL}"
 
-if [ $? -eq 0 ]; then
-    echo "Tunnel up on port 8085 (Argo) and reverse VNC on homes:15900."
-else
-    echo "Tunnel failed to start."
-    exit 1
-fi
+# Wait up to ~2 min for the connection to establish (you approving the Duo push).
+for _ in $(seq 1 24); do
+    sleep 5
+    if ssh -O check -o ControlPath="${CONTROL_PATH}" "${REMOTE_HOST}" 2>/dev/null; then
+        echo "Tunnel up on port 8085 (Argo) and reverse VNC on homes:15900."
+        exit 0
+    fi
+done
+
+echo "Tunnel failed to start (Duo not approved in time, or auth failed)."
+exit 1

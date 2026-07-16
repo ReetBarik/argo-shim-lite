@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rbarik.minion-tunnel</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/rbarik/argo-shim-lite/tunnel-service.sh</string>
+    </array>
+    <!-- Started on demand (kicked by the watchdog / start-minion-tunnel.sh), not
+         at load. KeepAlive=false so a failed/expired Duo does NOT loop and spam
+         pushes; the scheduled watchdog decides when to try again. -->
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/rbarik/.minion-logs/tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/rbarik/.minion-logs/tunnel.log</string>
+</dict>
+</plist>
