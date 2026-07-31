@@ -99,7 +99,9 @@ run_argo() {
         "${SSH_JUMP_OPTS[@]}" \
         -o ControlMaster=yes \
         -o ControlPath="${CONTROL_PATH}" \
-        -L ${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT} \
+        -o AddressFamily=inet \
+        -o ExitOnForwardFailure=yes \
+        -L 127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT} \
         ${REMOTE_HOST}
 
     if [ $? -ne 0 ]; then
@@ -107,7 +109,18 @@ run_argo() {
         exit 1
     fi
 
-    echo -e "${GREEN}SSH tunnel established (port ${TUNNEL_LOCAL_PORT})!${NC}"
+    # Verify the forward is actually listening before we trust ssh -f's exit code.
+    if command -v ss >/dev/null 2>&1; then
+        LISTEN_CHECK="ss -tln"
+    else
+        LISTEN_CHECK="lsof -iTCP:${TUNNEL_LOCAL_PORT} -sTCP:LISTEN -n -P"
+    fi
+    if ! ${LISTEN_CHECK} 2>/dev/null | grep -q ":${TUNNEL_LOCAL_PORT}\b"; then
+        echo -e "${RED}SSH tunnel appears not to be listening on 127.0.0.1:${TUNNEL_LOCAL_PORT}.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}SSH tunnel established (127.0.0.1:${TUNNEL_LOCAL_PORT})!${NC}"
 
     # Step 2: Start local proxy
     echo -e "${YELLOW}Starting local proxy...${NC}"
