@@ -162,9 +162,9 @@ AskSage only:
 - `ASKSAGE_MODEL` — short-circuit the model discovery query; passed straight through as `ANTHROPIC_MODEL`. Useful when you want to pin a specific model (e.g. `claude-sonnet-4-6`) or when the discovery query is failing.
 - `ASKSAGE_SMALL_FAST_MODEL` — same idea for `ANTHROPIC_SMALL_FAST_MODEL` (Claude Code's small/fast model used for cheap background tasks).
 
-## Claude Code config bundle (optional, recommended)
+## Claude Code config bundle (auto-installed)
 
-The repo also carries a cost-efficiency config for Claude Code itself, distilled from a measured usage retrospective (~76% of one day's token spend was context re-processing, not generated work). Install once:
+The repo also carries a cost-efficiency config for Claude Code itself, distilled from a measured usage retrospective (~76% of one day's token spend was context re-processing, not generated work). **The launcher installs it automatically on the first launch on each machine** (sentinel: the rules import in `~/.claude/CLAUDE.md`), so on a new cluster it's just clone + launch. Opt out by exporting `CLAUDE_CONFIG_AUTOINSTALL=0`, or make an uninstall stick with `touch ~/.claude/.skip-argo-shim-config`. You can also run it manually:
 
 ```bash
 ./install-claude-config.sh
@@ -176,7 +176,7 @@ This wires three things into `~/.claude` **by reference** — a `git pull` of th
 - **Context guard** (`claude-config/hooks/context-guard.py`, a `UserPromptSubmit` hook): if the session sat idle past the ~5-minute prompt-cache TTL with a ≥150K-token context, your next message is blocked once with the estimated re-warming cost — resend to proceed, or `/clear`/start fresh. Above 300K tokens it also nudges Claude to offer a session split. Fails open: any error lets the prompt through.
 - **Status line** (`claude-config/statusline.py`): model, effort, context size (green < 150K, yellow < 300K, red ≥ 300K with a `SPLIT?` marker), session cost, and lines changed.
 
-The installer is idempotent, backs up `settings.json` before touching it, preserves existing hooks, and never replaces a status line you already have (it prints the path to switch manually). Uninstall by removing the import line from `~/.claude/CLAUDE.md` and the `context-guard`/`statusLine` entries from `~/.claude/settings.json`.
+The installer is idempotent, backs up `settings.json` before touching it, preserves existing hooks, and never replaces a status line you already have (it prints the path to switch manually). Uninstall by removing the import line from `~/.claude/CLAUDE.md` and the `context-guard`/`statusLine` entries from `~/.claude/settings.json`, then `touch ~/.claude/.skip-argo-shim-config` so the launcher doesn't reinstall it.
 
 ## How it works
 

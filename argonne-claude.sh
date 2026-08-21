@@ -426,10 +426,18 @@ fi
 
 maybe_update_claude
 
-# One-time nudge: the repo also ships operating rules + a context-cost guard
-# + a status line for Claude Code (see claude-config/).
-if ! grep -qsF "claude-config/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" 2>/dev/null; then
-    echo -e "${YELLOW}Tip: run ${SCRIPT_DIR}/install-claude-config.sh once to enable the cost-efficiency rules, context guard, and status line.${NC}"
+# Auto-install the Claude Code config bundle (operating rules + context
+# guard + status line, see claude-config/) on first launch per machine. The
+# installer is idempotent and non-destructive; the sentinel is the rules
+# import in ~/.claude/CLAUDE.md. Opt out with CLAUDE_CONFIG_AUTOINSTALL=0 or
+# by creating ~/.claude/.skip-argo-shim-config (so an uninstall sticks).
+if [ "${CLAUDE_CONFIG_AUTOINSTALL:-1}" != "0" ] \
+    && [ ! -e "${HOME}/.claude/.skip-argo-shim-config" ] \
+    && ! grep -qsF "claude-config/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" 2>/dev/null; then
+    echo -e "${YELLOW}Claude Code config bundle not installed on this machine; installing...${NC}"
+    if ! bash "${SCRIPT_DIR}/install-claude-config.sh"; then
+        echo -e "${YELLOW}Config install failed; continuing without it (run install-claude-config.sh manually to retry).${NC}"
+    fi
 fi
 
 case "${BACKEND}" in
