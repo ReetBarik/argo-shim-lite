@@ -162,6 +162,22 @@ AskSage only:
 - `ASKSAGE_MODEL` — short-circuit the model discovery query; passed straight through as `ANTHROPIC_MODEL`. Useful when you want to pin a specific model (e.g. `claude-sonnet-4-6`) or when the discovery query is failing.
 - `ASKSAGE_SMALL_FAST_MODEL` — same idea for `ANTHROPIC_SMALL_FAST_MODEL` (Claude Code's small/fast model used for cheap background tasks).
 
+## Claude Code config bundle (optional, recommended)
+
+The repo also carries a cost-efficiency config for Claude Code itself, distilled from a measured usage retrospective (~76% of one day's token spend was context re-processing, not generated work). Install once:
+
+```bash
+./install-claude-config.sh
+```
+
+This wires three things into `~/.claude` **by reference** — a `git pull` of this repo updates them, no reinstall needed:
+
+- **Operating rules** (`claude-config/CLAUDE.md`, imported from `~/.claude/CLAUDE.md`): lean orchestration by default, heavy multi-agent reviews only for freezing artifacts (schemas, contracts, unattended plans), subagent reports capped at 500 words, escalation after two failed attempts, proactive handoff-prompt offers at phase boundaries.
+- **Context guard** (`claude-config/hooks/context-guard.py`, a `UserPromptSubmit` hook): if the session sat idle past the ~5-minute prompt-cache TTL with a ≥150K-token context, your next message is blocked once with the estimated re-warming cost — resend to proceed, or `/clear`/start fresh. Above 300K tokens it also nudges Claude to offer a session split. Fails open: any error lets the prompt through.
+- **Status line** (`claude-config/statusline.py`): model, effort, context size (green < 150K, yellow < 300K, red ≥ 300K with a `SPLIT?` marker), session cost, and lines changed.
+
+The installer is idempotent, backs up `settings.json` before touching it, preserves existing hooks, and never replaces a status line you already have (it prints the path to switch manually). Uninstall by removing the import line from `~/.claude/CLAUDE.md` and the `context-guard`/`statusLine` entries from `~/.claude/settings.json`.
+
 ## How it works
 
 ### Argo

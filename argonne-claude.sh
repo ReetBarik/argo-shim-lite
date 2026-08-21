@@ -426,6 +426,12 @@ fi
 
 maybe_update_claude
 
+# One-time nudge: the repo also ships operating rules + a context-cost guard
+# + a status line for Claude Code (see claude-config/).
+if ! grep -qsF "claude-config/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" 2>/dev/null; then
+    echo -e "${YELLOW}Tip: run ${SCRIPT_DIR}/install-claude-config.sh once to enable the cost-efficiency rules, context guard, and status line.${NC}"
+fi
+
 case "${BACKEND}" in
     argo)
         run_argo
