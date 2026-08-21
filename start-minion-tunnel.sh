@@ -18,7 +18,11 @@ if ssh -O check -o ControlPath="${CONTROL_PATH}" "${REMOTE_HOST}" 2>/dev/null; t
 fi
 
 echo "Starting Argo tunnel via launchd service (approve the Duo push on your phone)..."
-launchctl kickstart "gui/$(id -u)/${TUNNEL_LABEL}"
+# -k kills any existing instance first. Without it, a previous ssh left hung at the
+# Duo prompt keeps the job "running" and kickstart becomes a silent no-op: we would
+# tell you to approve a push that was never sent. We only get here when `ssh -O
+# check` already said the tunnel is down, so there is no healthy instance to kill.
+launchctl kickstart -k "gui/$(id -u)/${TUNNEL_LABEL}"
 
 # Wait up to ~2 min for the connection to establish (you approving the Duo push).
 for _ in $(seq 1 24); do

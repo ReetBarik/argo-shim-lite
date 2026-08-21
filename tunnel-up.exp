@@ -6,13 +6,28 @@
 # and because ssh stays in the foreground there is no pty to close and SIGHUP it.
 #
 # Usage: expect -f tunnel-up.exp ssh -N -L ... -R ... homes.cels.anl.gov
+#
+# It must NEVER block during authentication. A hung pre-auth ssh keeps the launchd
+# job in the "running" state forever, which silently turns every later restart into
+# a no-op -- the watchdog then reports "approve the Duo push" with no push ever sent.
+# So: answer the menu once, and exit non-zero on anything that means the push was
+# not approved (an expired push makes the server print "Login timed out." and
+# re-print the menu). Exiting lets the job go idle so the next check can retry.
 set timeout 90
+set answered 0
 eval spawn $argv
 expect {
-    -re "Passcode or option" { send "1\r" }
-    "Permission denied"      { exit 1 }
-    timeout                  { exit 2 }
-    eof                      { exit 3 }
+    -re "Passcode or option" {
+        if {$answered} { exit 4 }
+        set answered 1
+        send "1\r"
+        exp_continue
+    }
+    "Login timed out"         { exit 4 }
+    "Success. Logging you in" { }
+    "Permission denied"       { exit 1 }
+    timeout                   { exit 2 }
+    eof                       { exit 3 }
 }
 # Auth answered and push approved -- now hold the tunnel open until ssh exits.
 set timeout -1
