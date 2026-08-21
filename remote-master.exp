@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+# Authenticates an ssh ControlMaster with a human in the auth loop, then lets
+# ssh hand itself to the background (the caller passes `ssh -f -N -M ...`).
+# Modeled on tunnel-up.exp: it must NEVER leave a hung pre-auth ssh behind --
+# answer each prompt at most once and exit non-zero on anything that means
+# authentication did not complete.
+#
+# Usage:  REMOTE_MASTER_SECRET=<secret-or-empty> \
+#           expect -f remote-master.exp <duo|otp> ssh -f -N -M ... <host>
+#
+#   duo: answer the ANL Duo menu with "1" (push -> human approves on phone).
+#        If a password prompt appears first (e.g. JLSE without a registered
+#        pubkey), send $REMOTE_MASTER_SECRET once; fail if it is empty.
+#   otp: send $REMOTE_MASTER_SECRET (MobilePASS passcode) at the password
+#        prompt, exactly once. A re-prompt means a bad code -- fail, never
+#        retry with the same code.
+#
+# Exit codes: 0 auth completed (caller MUST verify with `ssh -O check`),
+# 1 permission denied, 2 timeout, 4 push expired/denied or prompt re-printed,
+# 6 needed a secret it did not have (or unexpected prompt for this mode).
+
+set mode [lindex $argv 0]
+set sshcmd [lrange $argv 1 end]
+set secret ""
+if {[info exists env(REMOTE_MASTER_SECRET)]} { set secret $env(REMOTE_MASTER_SECRET) }
+set timeout 120
+if {[info exists env(REMOTE_MASTER_TIMEOUT)]} { set timeout $env(REMOTE_MASTER_TIMEOUT) }
+set sent_secret 0
+set answered 0
+
+# Pattern note: expect's gate-keeper optimization derives a CASE-SENSITIVE
+# glob prefilter from each -re pattern and ignores (?i), so case-insensitive
+# flags silently never match ("Passcode" vs booster glob "passcode...").
+# Match the exact strings servers print, or use the "assword:" trick.
+eval spawn $sshcmd
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "Passcode or option" {
+        if {$mode ne "duo"} { exit 6 }
+        if {$answered} { exit 4 }
+        set answered 1
+        send "1\r"
+        exp_continue
+    }
+    -re {assword: ?} {
+        if {$sent_secret} { exit 4 }
+        if {$secret eq ""} { exit 6 }
+        set sent_secret 1
+        send "$secret\r"
+        exp_continue
+    }
+    "Login timed out"         { exit 4 }
+    "Permission denied"       { exit 1 }
+    timeout                   { exit 2 }
+    eof                       { }
+}
+# eof: with -f, ssh only detaches to the background after auth succeeds, so
+# reaching here normally means the master is up. Auth failures also end in
+# eof, which is why the caller re-verifies with `ssh -O check`.
+exit 0
