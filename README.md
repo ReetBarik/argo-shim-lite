@@ -81,7 +81,27 @@ argonne-claude.sh --backend=asksage
 
 # AskSage with the key passed inline
 argonne-claude.sh --backend=asksage --identity=sk-asksage-...
+
+# Launch with the best Sonnet as the main model instead of the best Opus
+argonne-claude.sh --backend=asksage --tier=exec
 ```
+
+### Model tiers
+
+Both backends discover the model catalog at launch, rank every Claude entry by
+family and version, and resolve **the most capable Opus, Sonnet, and Haiku
+available** — whatever the gateway happens to call them. `--tier` decides which
+becomes the main model:
+
+| Tier | Main model | Default reasoning effort | Meant for |
+|------|-----------|--------------------------|-----------|
+| `plan` (default) | best Opus | Claude Code's default | design, planning, prompt-authoring sessions |
+| `exec` | best Sonnet | `high` | executing against an existing plan/spec |
+
+All three resolved names are also pinned to Claude Code's model aliases, so
+switching mid-session is just `/model opus`, `/model sonnet`, or
+`/model haiku` — no need to know the gateway's exact id strings. Set
+`CLAUDE_TIER=exec` in your shell to change the default tier without the flag.
 
 ### Identity
 
@@ -99,9 +119,10 @@ The `--identity` flag is the unified way to tell the launcher who you are. It ma
 
 ### Argo flow
 
-1. Opens an SSH tunnel to `apps.inside.anl.gov` via `homes.cels.anl.gov` (you'll be prompted for MFA).
-2. Starts the local proxy on port 8083.
-3. Launches Claude Code wired up to the proxy.
+1. Probes for a free local port (starting at 8082, or `ARGO_TUNNEL_PORT`) and opens an SSH tunnel to `apps.inside.anl.gov` via `homes.cels.anl.gov` on it (you'll be prompted for MFA). A stale tunnel or another service on the default port no longer requires manual edits — the launcher just picks the next free port.
+2. Probes for a second free port (starting at 8083, or `ARGO_PROXY_PORT`) and starts the local proxy on it, wired to the tunnel port. If another process grabs the port between probe and bind, the launcher retries on the next free one.
+3. Queries `/v1/models` through the proxy, ranks the catalog, and picks the best Opus / Sonnet / Haiku (see [Model tiers](#model-tiers)). Pin models manually with `ARGO_MODEL` / `ARGO_SMALL_FAST_MODEL` — the escape hatch if the gateway doesn't expose `/v1/models` or names models in a way the ranker mis-parses.
+4. Launches Claude Code wired up to the proxy with the picked model env vars.
 
 When you exit Claude, the proxy and SSH tunnel are torn down automatically.
 
@@ -110,7 +131,7 @@ When you exit Claude, the proxy and SSH tunnel are torn down automatically.
 1. Resolves your API key from env or token file.
 2. Queries `${ASKSAGE_BASE_URL}/v1/models` to discover which models the tenant serves. Skip the query by setting `ASKSAGE_MODEL` and/or `ASKSAGE_SMALL_FAST_MODEL` yourself.
 3. Probes whether the tenant accepts Claude Code's newer adaptive-thinking mode (`thinking: {type: "adaptive"}`, which Opus 4.7 turns on by default). When the backend rejects it, sets `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` for this run. Skip the probe by setting `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` yourself.
-4. Picks the main model from the catalog: when adaptive thinking is supported, takes the first (most-capable) entry — currently `claude-opus-4-7`. When it isn't, prefers an `opus-4-6` / `sonnet-4-6` model, since `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` is only honored by Claude Code for those model names; for Opus 4.7 specifically, adaptive thinking is the only mode and the env var is bypassed. Picks the first `haiku` entry as `ANTHROPIC_SMALL_FAST_MODEL`. When AskSage adds adaptive support upstream, the probe starts succeeding and the picker reverts to the first entry automatically — no code change needed.
+4. Ranks the catalog and picks the best Opus / Sonnet / Haiku (see [Model tiers](#model-tiers)). When adaptive thinking is rejected, candidates are first restricted to `opus-4-6` / `sonnet-4-6` models, since `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` is only honored by Claude Code for those model names; when AskSage adds adaptive support upstream, the probe starts succeeding and the full catalog (Opus 4.7, Opus 5, ...) becomes eligible automatically — no code change needed.
 5. Launches Claude Code with `ANTHROPIC_BASE_URL` pointed at the Ask Sage endpoint, the picked model env vars, and (if applicable) the adaptive-thinking opt-out.
 
 ### Optional environment overrides
@@ -118,12 +139,16 @@ When you exit Claude, the proxy and SSH tunnel are torn down automatically.
 Common:
 
 - `CLAUDE_EXECUTABLE` — path or name of the `claude` binary to launch (defaults to `claude`).
+- `CLAUDE_TIER` — default for `--tier` (`plan` or `exec`).
+- `CLAUDE_CODE_EFFORT_LEVEL` — reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`). If you set it yourself, the launcher's `exec`-tier default of `high` steps aside.
 
 Argo only:
 
 - `ARGO_USER` — fallback identity if `--identity` is not passed (defaults to `$USER`).
 - `ARGO_AURORA_UAN` — UAN to use as the first SSH hop on Aurora compute nodes (defaults to `$PBS_O_HOST`, falling back to `aurora-uan-0011`).
 - `ARGO_SSH_JUMP` — explicit comma-separated SSH jump chain passed as `-J`. Overrides the auto-detected compute-node default.
+- `ARGO_TUNNEL_PORT` / `ARGO_PROXY_PORT` — starting points for the port probes (default 8082 / 8083). The launcher scans upward from each for a free port.
+- `ARGO_MODEL` / `ARGO_SMALL_FAST_MODEL` — short-circuit model discovery, same semantics as the AskSage equivalents below.
 
 AskSage only:
 
@@ -137,9 +162,9 @@ AskSage only:
 
 ### Argo
 
-1. The SSH tunnel forwards local port 8082 to `apps.inside.anl.gov:443` through `homes.cels.anl.gov`.
-2. `claude-argo-proxy.py` listens on port 8083, rewrites the `Host` header, and forwards requests through the tunnel.
-3. Claude Code sends requests to `http://127.0.0.1:8083/argoapi/`, which routes them to the Argo API.
+1. The SSH tunnel forwards a probed local port (8082 by default) to `apps.inside.anl.gov:443` through `homes.cels.anl.gov`.
+2. `claude-argo-proxy.py` listens on a second probed port (8083 by default; the launcher passes both ports via `ARGO_PROXY_LISTEN_PORT` / `ARGO_PROXY_TARGET_PORT`), rewrites the `Host` header, and forwards requests through the tunnel.
+3. Claude Code sends requests to `http://127.0.0.1:<proxy-port>/argoapi/`, which routes them to the Argo API.
 
 ### AskSage
 
