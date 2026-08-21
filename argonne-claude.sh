@@ -208,7 +208,12 @@ run_argo() {
     FORWARD_SPEC=()
 
     cleanup() {
-        echo -e "\n${YELLOW}Cleaning up...${NC}"
+        # Preserve the status of whatever just ran (normally the claude
+        # process) -- a headless driver must be able to see claude fail.
+        local rc=$?
+        # Chatter goes to stderr so it can never contaminate claude's stdout
+        # (e.g. --output-format json piped from a `-- -p` run).
+        echo -e "\n${YELLOW}Cleaning up...${NC}" >&2
 
         if [ -n "${PROXY_PID}" ]; then
             kill ${PROXY_PID} 2>/dev/null
@@ -216,6 +221,8 @@ run_argo() {
 
         # Close the SSH tunnel via control socket. On a shared master, cancel
         # only this run's forward and leave the master (and its one MFA) alive.
+        # FORWARD_SPEC is non-empty only after the forward was actually
+        # established, so a failed add never cancels anything.
         if [ "${CONTROL_SHARED}" = "1" ]; then
             if [ ${#FORWARD_SPEC[@]} -gt 0 ]; then
                 ssh -O cancel "${FORWARD_SPEC[@]}" -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null || true
@@ -224,8 +231,8 @@ run_argo() {
             ssh -O exit -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null || true
         fi
 
-        echo -e "${GREEN}Done!${NC}"
-        exit 0
+        echo -e "${GREEN}Done!${NC}" >&2
+        exit "${rc}"
     }
 
     trap cleanup SIGINT SIGTERM EXIT
@@ -249,16 +256,19 @@ run_argo() {
         echo -e "${YELLOW}Using SSH jump chain: ${ARGO_SSH_JUMP}${NC}"
     fi
 
-    FORWARD_SPEC=(-L "127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT}")
+    # Assigned to FORWARD_SPEC only once the forward actually exists, so the
+    # cleanup trap on a failed attempt has nothing to cancel.
+    WANT_FORWARD=(-L "127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT}")
 
     if [ "${CONTROL_SHARED}" = "1" ] \
         && ssh -O check -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null; then
         # Persistent master already authenticated -- just add this run's forward.
         echo -e "${GREEN}Reusing persistent SSH master (${CONTROL_PATH}) -- no MFA needed.${NC}"
-        if ! ssh -O forward "${FORWARD_SPEC[@]}" -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST}; then
+        if ! ssh -O forward "${WANT_FORWARD[@]}" -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST}; then
             echo -e "${RED}Failed to add port forward on the persistent master.${NC}"
             exit 1
         fi
+        FORWARD_SPEC=("${WANT_FORWARD[@]}")
     else
         # A dead socket left by a lost connection makes `ssh -M` refuse to
         # create a fresh master at the same path; -O check above said it's dead.
@@ -269,13 +279,14 @@ run_argo() {
             -o ControlPath="${CONTROL_PATH}" \
             -o AddressFamily=inet \
             -o ExitOnForwardFailure=yes \
-            "${FORWARD_SPEC[@]}" \
+            "${WANT_FORWARD[@]}" \
             ${REMOTE_HOST}
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}SSH tunnel failed to start. Check your credentials and MFA.${NC}"
             exit 1
         fi
+        FORWARD_SPEC=("${WANT_FORWARD[@]}")
     fi
 
     # Verify the forward is actually listening before we trust ssh -f's exit code.
