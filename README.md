@@ -93,10 +93,13 @@ family and version, and resolve **the most capable Opus, Sonnet, and Haiku
 available** — whatever the gateway happens to call them. `--tier` decides which
 becomes the main model:
 
-| Tier | Main model | Default reasoning effort | Meant for |
-|------|-----------|--------------------------|-----------|
-| `plan` (default) | best Opus | Claude Code's default | design, planning, prompt-authoring sessions |
+| Tier | Main model | Reasoning effort | Meant for |
+|------|-----------|------------------|-----------|
+| `plan` (default) | best Opus | `xhigh` (`high` if the model predates xhigh) | design, planning, prompt-authoring sessions |
 | `exec` | best Sonnet | `high` | executing against an existing plan/spec |
+
+The tier implies the effort so there's only one decision per launch; export
+`CLAUDE_CODE_EFFORT_LEVEL` yourself to override the mapping.
 
 All three resolved names are also pinned to Claude Code's model aliases, so
 switching mid-session is just `/model opus`, `/model sonnet`, or
@@ -140,7 +143,7 @@ Common:
 
 - `CLAUDE_EXECUTABLE` — path or name of the `claude` binary to launch (defaults to `claude`).
 - `CLAUDE_TIER` — default for `--tier` (`plan` or `exec`).
-- `CLAUDE_CODE_EFFORT_LEVEL` — reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`). If you set it yourself, the launcher's `exec`-tier default of `high` steps aside.
+- `CLAUDE_CODE_EFFORT_LEVEL` — reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`). If you set it yourself, the launcher's tier→effort mapping (plan → `xhigh`, exec → `high`) steps aside.
 
 Argo only:
 

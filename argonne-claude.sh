@@ -129,10 +129,21 @@ build_model_env() {
     if [ -n "${BEST_OPUS}" ] && [ -n "${BEST_SONNET}" ]; then
         echo -e "${YELLOW}Switch anytime with /model opus (${BEST_OPUS}) or /model sonnet (${BEST_SONNET}).${NC}"
     fi
-    # exec tier: cap default reasoning effort at 'high' (cheaper, and valid on
-    # every Claude model); plan tier keeps Claude Code's own default.
-    if [ "${TIER}" = "exec" ] && [ -z "${CLAUDE_CODE_EFFORT_LEVEL+set}" ]; then
-        MODEL_ENV+=("CLAUDE_CODE_EFFORT_LEVEL=high")
+    # The tier implies the reasoning effort, so it's one decision, not two:
+    # plan -> xhigh (best for design/planning work; downgraded to high when
+    # the picked model predates xhigh support), exec -> high (the
+    # cost/quality sweet spot, valid on every Claude model). An explicitly
+    # exported CLAUDE_CODE_EFFORT_LEVEL always wins.
+    if [ -z "${CLAUDE_CODE_EFFORT_LEVEL+set}" ]; then
+        local effort="high"
+        if [ "${TIER}" = "plan" ]; then
+            case "${main}" in
+                *opus-5*|*opus-4-7*|*opus-4-8*|*sonnet-5*|*fable*|*mythos*)
+                    effort="xhigh" ;;
+            esac
+        fi
+        MODEL_ENV+=("CLAUDE_CODE_EFFORT_LEVEL=${effort}")
+        echo -e "${GREEN}Reasoning effort (--tier=${TIER}): ${effort}${NC}"
     fi
 }
 
