@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rbarik.minion-ip-report</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/rbarik/argo-shim-lite/report-ip.sh</string>
+    </array>
+    <!-- Fire at load/boot, on any network reconfiguration, and every 15 minutes as
+         a backstop for DHCP renewals that never touch resolv.conf. The script only
+         POSTS when the address actually changed (or after a reboot), so a stable
+         IP means zero Discord traffic no matter how often this runs. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>WatchPaths</key>
+    <array>
+        <string>/var/run/resolv.conf</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/rbarik/.minion-logs/ip-report.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/rbarik/.minion-logs/ip-report.err.log</string>
+</dict>
+</plist>

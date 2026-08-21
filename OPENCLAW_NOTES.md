@@ -30,6 +30,19 @@ Argo LLM API
 |------|---------|
 | `openclaw-argo-proxy.py` | Proxy on 8084, forwards through tunnel on 8085, converts x-api-key → Bearer auth |
 | `argonne-openclaw.sh` | Launcher: tunnel + proxy + openclaw |
+| `report-ip.sh` | Posts the mini's primary IP to #openclaw on change/reboot, so you can reach it from home |
+
+## launchd services
+
+All are user agents in `gui/$(id -u)`, installed from `launchd/` into `~/Library/LaunchAgents/`.
+Being *user* agents, they need `rbarik` to be logged in — they do not start at the login window.
+
+| Label | Trigger | Does |
+|-------|---------|------|
+| `com.rbarik.minion-proxy` | RunAtLoad + KeepAlive | Runs `openclaw-argo-proxy.py` on 8084 |
+| `com.rbarik.minion-tunnel` | On demand (`kickstart -k`) | Runs `tunnel-service.sh`: `ssh -N` under expect, answers Duo |
+| `com.rbarik.minion-tunnel-check` | 8 AM–8 PM, every 2h | `tunnel-healthcheck.sh`: restarts the tunnel if down, alerts #openclaw |
+| `com.rbarik.minion-ip-report` | RunAtLoad, every 15 min, on `/var/run/resolv.conf` change | `report-ip.sh`: posts the IP to #openclaw, but only when it changed |
 
 ## OpenClaw config changes
 
