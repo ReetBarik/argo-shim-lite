@@ -142,6 +142,7 @@ When you exit Claude, the proxy and SSH tunnel are torn down automatically.
 Common:
 
 - `CLAUDE_EXECUTABLE` — path or name of the `claude` binary to launch (defaults to `claude`).
+- `CLAUDE_AUTO_UPDATE` — set to `0` to skip the pre-launch `claude update` check. The launcher runs it before every session (90s timeout, never fatal — no network or a read-only install just launches the installed version). `DISABLE_AUTOUPDATER=1` is also honored. Requires a `claude` installed via the native installer (`install.sh`); npm-managed installs should update via npm instead.
 - `CLAUDE_TIER` — default for `--tier` (`plan` or `exec`).
 - `CLAUDE_CODE_EFFORT_LEVEL` — reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`). If you set it yourself, the launcher's tier→effort mapping (plan → `xhigh`, exec → `high`) steps aside.
 

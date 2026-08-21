@@ -55,6 +55,24 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Run Claude Code's built-in updater before launch so every session starts on
+# the latest version. Never fatal: no network (compute nodes), a read-only
+# install, or a timeout just launches the installed version. Skip with
+# CLAUDE_AUTO_UPDATE=0 (or the standard DISABLE_AUTOUPDATER=1).
+maybe_update_claude() {
+    [ "${CLAUDE_AUTO_UPDATE:-1}" = "0" ] && return 0
+    [ "${DISABLE_AUTOUPDATER:-0}" = "1" ] && return 0
+    command -v "${CLAUDE_EXECUTABLE}" >/dev/null 2>&1 || return 0
+    echo -e "${YELLOW}Checking for Claude Code updates...${NC}"
+    local runner=() out
+    command -v timeout >/dev/null 2>&1 && runner=(timeout 90)
+    if out="$("${runner[@]}" "${CLAUDE_EXECUTABLE}" update 2>&1)"; then
+        printf '%s\n' "${out}" | tail -2
+    else
+        echo -e "${YELLOW}Update check failed or timed out; launching the installed version.${NC}"
+    fi
+}
+
 # Print the first free localhost port >= $1 (scans 50 ports). Empty on failure.
 find_free_port() {
     python3 - "$1" <<'PY'
@@ -405,6 +423,8 @@ if [ -z "${BACKEND}" ]; then
     echo -e "${YELLOW}Use --backend=argo or --backend=asksage${NC}" >&2
     exit 1
 fi
+
+maybe_update_claude
 
 case "${BACKEND}" in
     argo)
