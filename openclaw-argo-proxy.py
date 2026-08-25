@@ -78,7 +78,7 @@ async def on_cleanup(app):
     await app["session"].close()
 
 
-app = aiohttp.web.Application()
+app = aiohttp.web.Application(client_max_size=8 * 1024**2)
 app.router.add_route("*", "/{path_info:.*}", proxy_request)
 
 app.on_startup.append(on_startup)

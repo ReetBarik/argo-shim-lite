@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
+import os
+
 import aiohttp
 import aiohttp.web
 
-LISTEN_PORT = 8083
-TARGET_HOST = "apps.inside.anl.gov"
+# Ports are supplied by argonne-claude.sh, which probes for free ones at
+# startup; the defaults only matter when running the proxy standalone.
+LISTEN_PORT = int(os.environ.get("ARGO_PROXY_LISTEN_PORT", "8083"))
+TARGET_HOST = os.environ.get("ARGO_PROXY_TARGET_HOST", "apps.inside.anl.gov")
 TUNNEL_HOST = "127.0.0.1"
-TARGET_PORT = 8082
+TARGET_PORT = int(os.environ.get("ARGO_PROXY_TARGET_PORT", "8082"))
 
 
 async def proxy_request(request):
@@ -71,7 +75,7 @@ async def on_cleanup(app):
     await app["session"].close()
 
 
-app = aiohttp.web.Application()
+app = aiohttp.web.Application(client_max_size=8 * 1024**2)
 app.router.add_route("*", "/{path_info:.*}", proxy_request)
 
 app.on_startup.append(on_startup)
