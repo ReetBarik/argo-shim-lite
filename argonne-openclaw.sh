@@ -101,7 +101,7 @@ else
     PYTHON="python3"
 fi
 
-ARGO_USER="${ARGO_IDENTITY}" "${PYTHON}" "${SCRIPT_DIR}/openclaw-argo-proxy.py" &
+ARGO_USER="${ARGO_IDENTITY}" "${PYTHON}" "${SCRIPT_DIR}/hermes-argo-proxy.py" &
 PROXY_PID=$!
 
 sleep 2

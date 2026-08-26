@@ -59,7 +59,7 @@ infrastructure all carry over unchanged.
 |------|---------|
 | 8082 | Claude Code SSH tunnel |
 | 8083 | claude-argo-proxy.py (Claude Code) |
-| 8084 | openclaw-argo-proxy.py (OpenClaw) |
+| 8084 | hermes-argo-proxy.py (OpenClaw) |
 | 8085 | OpenClaw SSH tunnel |
 
 ---
@@ -163,7 +163,7 @@ rm ~/Library/LaunchAgents/com.rbarik.minion-bot.plist
 - `launchd/com.rbarik.minion-bot.plist` — delete from repo
 
 **3. What stays:**
-- `openclaw-argo-proxy.py` — still needed
+- `hermes-argo-proxy.py` — still needed
 - `com.rbarik.minion-proxy` launchd service — still needed
 - `start-minion-tunnel.sh` — still needed (tunnel skill calls it)
 - `launchd/com.rbarik.minion-proxy.plist` — still needed

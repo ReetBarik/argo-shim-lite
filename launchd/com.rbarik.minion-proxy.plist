@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/Users/rbarik/argo-shim-lite/.venv/bin/python3</string>
-        <string>/Users/rbarik/argo-shim-lite/openclaw-argo-proxy.py</string>
+        <string>/Users/rbarik/argo-shim-lite/hermes-argo-proxy.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>

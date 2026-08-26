@@ -17,7 +17,7 @@ Not Aurora, not a cluster login node.
 
 Every step below **adds** files, ports, launchd labels, and Discord identities.
 Nothing modifies a file OpenClaw reads or a service it depends on. If you find
-yourself editing `openclaw-argo-proxy.py`, `~/.openclaw/*`, `~/.minion-secrets`,
+yourself editing `hermes-argo-proxy.py`, `~/.openclaw/*`, `~/.minion-secrets`,
 or any `com.rbarik.minion-*` plist — stop, you've left the plan.
 
 Rollback at any point is: stop the new thing. OpenClaw never knew.
@@ -36,7 +36,7 @@ Rollback at any point is: stop the new thing. OpenClaw never knew.
 
 | Port | Owner | Status |
 |---|---|---|
-| 8084 | `openclaw-argo-proxy.py` (OpenClaw) | existing — **read-only use in Phase 0–4** |
+| 8084 | `hermes-argo-proxy.py` (OpenClaw) | existing — **read-only use in Phase 0–4** |
 | 8085 | SSH tunnel → `apps.inside.anl.gov:443` | existing — **shared, do not open a second one** |
 | 18789 | OpenClaw gateway | existing |
 | 8086 | `hermes-argo-proxy.py` | new, Phase 5 |

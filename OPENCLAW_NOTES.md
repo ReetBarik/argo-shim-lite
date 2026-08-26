@@ -17,7 +17,7 @@ openclaw TUI
     ↓
 OpenClaw gateway (launchd, port 18789)
     ↓  ANTHROPIC_BASE_URL from gateway env
-openclaw-argo-proxy.py  (port 8084)
+hermes-argo-proxy.py  (port 8084)
     ↓  strips x-api-key, injects Authorization: Bearer <ARGO_USER>
 SSH tunnel (port 8085 → apps.inside.anl.gov:443)
     ↓
@@ -28,7 +28,7 @@ Argo LLM API
 
 | File | Purpose |
 |------|---------|
-| `openclaw-argo-proxy.py` | Proxy on 8084, forwards through tunnel on 8085, converts x-api-key → Bearer auth |
+| `hermes-argo-proxy.py` | Proxy on 8084, forwards through tunnel on 8085, converts x-api-key → Bearer auth |
 | `argonne-openclaw.sh` | Launcher: tunnel + proxy + openclaw |
 | `report-ip.sh` | Posts the mini's primary IP to #openclaw on change/reboot, so you can reach it from home |
 
@@ -39,7 +39,7 @@ Being *user* agents, they need `rbarik` to be logged in — they do not start at
 
 | Label | Trigger | Does |
 |-------|---------|------|
-| `com.rbarik.minion-proxy` | RunAtLoad + KeepAlive | Runs `openclaw-argo-proxy.py` on 8084 |
+| `com.rbarik.minion-proxy` | RunAtLoad + KeepAlive | Runs `hermes-argo-proxy.py` on 8084 |
 | `com.rbarik.minion-tunnel` | On demand (`kickstart -k`) | Runs `tunnel-service.sh`: `ssh -N` under expect, answers Duo |
 | `com.rbarik.minion-tunnel-check` | 8 AM–8 PM, every 2h | `tunnel-healthcheck.sh`: restarts the tunnel if down, alerts #openclaw |
 | `com.rbarik.minion-ip-report` | RunAtLoad, every 15 min, on `/var/run/resolv.conf` change | `report-ip.sh`: posts the IP to #openclaw, but only when it changed |
@@ -97,5 +97,5 @@ sed -i '' \
 |------|---------|
 | 8082 | `argonne-claude.sh` SSH tunnel (Claude Code) |
 | 8083 | `claude-argo-proxy.py` (Claude Code) |
-| 8084 | `openclaw-argo-proxy.py` (OpenClaw) |
+| 8084 | `hermes-argo-proxy.py` (OpenClaw) |
 | 8085 | `argonne-openclaw.sh` SSH tunnel (OpenClaw) |
