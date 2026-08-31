@@ -3,8 +3,12 @@
 # Defaults
 BACKEND=""
 IDENTITY=""
+# Which discovered model becomes the main model: 'plan' -> best Opus,
+# 'exec' -> best Sonnet. Both are always resolved and exported as the
+# /model opus | /model sonnet aliases, so switching mid-session is instant.
+TIER="${CLAUDE_TIER:-plan}"
 
-# Parse args. Only --backend / --identity are consumed; anything else is ignored.
+# Parse args. Only --backend / --identity / --tier are consumed; anything else is ignored.
 while [ $# -gt 0 ]; do
     case "$1" in
         --backend=*)
@@ -23,11 +27,24 @@ while [ $# -gt 0 ]; do
             IDENTITY="$2"
             shift 2
             ;;
+        --tier=*)
+            TIER="${1#--tier=}"
+            shift
+            ;;
+        --tier)
+            TIER="$2"
+            shift 2
+            ;;
         *)
             shift
             ;;
     esac
 done
+
+if [ "${TIER}" != "plan" ] && [ "${TIER}" != "exec" ]; then
+    echo "Unknown --tier: ${TIER} (use plan or exec)" >&2
+    exit 1
+fi
 
 CLAUDE_EXECUTABLE="${CLAUDE_EXECUTABLE:-claude}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -38,13 +55,123 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Run Claude Code's built-in updater before launch so every session starts on
+# the latest version. Never fatal: no network (compute nodes), a read-only
+# install, or a timeout just launches the installed version. Skip with
+# CLAUDE_AUTO_UPDATE=0 (or the standard DISABLE_AUTOUPDATER=1).
+maybe_update_claude() {
+    [ "${CLAUDE_AUTO_UPDATE:-1}" = "0" ] && return 0
+    [ "${DISABLE_AUTOUPDATER:-0}" = "1" ] && return 0
+    command -v "${CLAUDE_EXECUTABLE}" >/dev/null 2>&1 || return 0
+    echo -e "${YELLOW}Checking for Claude Code updates...${NC}"
+    local runner=() out
+    command -v timeout >/dev/null 2>&1 && runner=(timeout 90)
+    if out="$("${runner[@]}" "${CLAUDE_EXECUTABLE}" update 2>&1)"; then
+        printf '%s\n' "${out}" | tail -2
+    else
+        echo -e "${YELLOW}Update check failed or timed out; launching the installed version.${NC}"
+    fi
+}
+
+# Print the first free localhost port >= $1 (scans 50 ports). Empty on failure.
+find_free_port() {
+    python3 - "$1" <<'PY'
+import socket, sys
+start = int(sys.argv[1])
+for port in range(start, start + 50):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        s.close()
+        print(port)
+        sys.exit(0)
+    except OSError:
+        s.close()
+sys.exit(1)
+PY
+}
+
+# Extract model ids from a /v1/models JSON payload on stdin, one per line.
+extract_model_ids() {
+    python3 -c '
+import json, sys
+try:
+    print("\n".join(m.get("id","") for m in json.load(sys.stdin).get("data", []) if m.get("id")))
+except Exception:
+    pass
+' 2>/dev/null
+}
+
+# Rank $AVAILABLE_IDS and set BEST_OPUS / BEST_SONNET / BEST_HAIKU.
+pick_best_models() {
+    BEST_OPUS=""; BEST_SONNET=""; BEST_HAIKU=""
+    [ -z "${AVAILABLE_IDS}" ] && return
+    local picks
+    picks="$(printf '%s\n' "${AVAILABLE_IDS}" | python3 "${SCRIPT_DIR}/pick-models.py" 2>/dev/null)"
+    BEST_OPUS="$(printf '%s\n' "${picks}" | sed -n 's/^BEST_OPUS=//p')"
+    BEST_SONNET="$(printf '%s\n' "${picks}" | sed -n 's/^BEST_SONNET=//p')"
+    BEST_HAIKU="$(printf '%s\n' "${picks}" | sed -n 's/^BEST_HAIKU=//p')"
+}
+
+# Fill the MODEL_ENV array from BEST_* + tier. $1/$2: user overrides for the
+# main and small/fast model (empty = use discovery).
+build_model_env() {
+    local main_override="$1" fast_override="$2" main="" fast=""
+    MODEL_ENV=()
+    if [ -n "${main_override}" ]; then
+        main="${main_override}"
+    elif [ "${TIER}" = "exec" ]; then
+        main="${BEST_SONNET:-${BEST_OPUS}}"
+    else
+        main="${BEST_OPUS:-${BEST_SONNET}}"
+    fi
+    fast="${fast_override:-${BEST_HAIKU}}"
+
+    if [ -n "${main}" ]; then
+        MODEL_ENV+=("ANTHROPIC_MODEL=${main}")
+        echo -e "${GREEN}Main model (--tier=${TIER}): ${main}${NC}"
+    else
+        echo -e "${YELLOW}Could not discover a main model; Claude Code will use its default (may fail against this backend).${NC}"
+    fi
+    if [ -n "${fast}" ]; then
+        # ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of
+        # ANTHROPIC_DEFAULT_HAIKU_MODEL; set both for older binaries.
+        MODEL_ENV+=("ANTHROPIC_SMALL_FAST_MODEL=${fast}")
+        echo -e "${GREEN}Small/fast model: ${fast}${NC}"
+    fi
+    # Pin the in-session /model aliases to the best discovered ids so
+    # switching tiers mid-session is just `/model opus` or `/model sonnet`.
+    [ -n "${BEST_OPUS}" ]   && MODEL_ENV+=("ANTHROPIC_DEFAULT_OPUS_MODEL=${BEST_OPUS}")
+    [ -n "${BEST_SONNET}" ] && MODEL_ENV+=("ANTHROPIC_DEFAULT_SONNET_MODEL=${BEST_SONNET}")
+    [ -n "${fast}" ]        && MODEL_ENV+=("ANTHROPIC_DEFAULT_HAIKU_MODEL=${fast}")
+    if [ -n "${BEST_OPUS}" ] && [ -n "${BEST_SONNET}" ]; then
+        echo -e "${YELLOW}Switch anytime with /model opus (${BEST_OPUS}) or /model sonnet (${BEST_SONNET}).${NC}"
+    fi
+    # The tier implies the reasoning effort, so it's one decision, not two:
+    # plan -> xhigh (best for design/planning work; downgraded to high when
+    # the picked model predates xhigh support), exec -> high (the
+    # cost/quality sweet spot, valid on every Claude model). An explicitly
+    # exported CLAUDE_CODE_EFFORT_LEVEL always wins.
+    if [ -z "${CLAUDE_CODE_EFFORT_LEVEL+set}" ]; then
+        local effort="high"
+        if [ "${TIER}" = "plan" ]; then
+            case "${main}" in
+                *opus-5*|*opus-4-7*|*opus-4-8*|*sonnet-5*|*fable*|*mythos*)
+                    effort="xhigh" ;;
+            esac
+        fi
+        MODEL_ENV+=("CLAUDE_CODE_EFFORT_LEVEL=${effort}")
+        echo -e "${GREEN}Reasoning effort (--tier=${TIER}): ${effort}${NC}"
+    fi
+}
+
 run_argo() {
-    # Configuration
+    # Configuration. Ports are starting points — the launcher probes upward
+    # from each and uses the first free one, so stale tunnels or other
+    # services on the defaults no longer require manual edits.
     REMOTE_HOST="homes.cels.anl.gov"
-    TUNNEL_LOCAL_PORT=8082
     TUNNEL_REMOTE_HOST="apps.inside.anl.gov"
     TUNNEL_REMOTE_PORT=443
-    PROXY_PORT=8083
 
     # SSH jump chain. On Aurora compute nodes ($PBS_JOBID set) the default
     # routes through a UAN; PBS records the submitting UAN in $PBS_O_HOST.
@@ -78,10 +205,10 @@ run_argo() {
 
     echo -e "${GREEN}Starting Argo Claude setup...${NC}"
 
-    # Check if tunnel port is already in use
-    if lsof -i :${TUNNEL_LOCAL_PORT} >/dev/null 2>&1; then
-        echo -e "${RED}Port ${TUNNEL_LOCAL_PORT} is already in use.${NC}"
-        echo -e "${YELLOW}Check for an existing SSH tunnel: lsof -i :${TUNNEL_LOCAL_PORT}${NC}"
+    # Probe for a free tunnel port (starting at ARGO_TUNNEL_PORT or 8082)
+    TUNNEL_LOCAL_PORT="$(find_free_port "${ARGO_TUNNEL_PORT:-8082}")"
+    if [ -z "${TUNNEL_LOCAL_PORT}" ]; then
+        echo -e "${RED}No free port found for the SSH tunnel (tried 50 ports from ${ARGO_TUNNEL_PORT:-8082}).${NC}"
         exit 1
     fi
 
@@ -99,7 +226,9 @@ run_argo() {
         "${SSH_JUMP_OPTS[@]}" \
         -o ControlMaster=yes \
         -o ControlPath="${CONTROL_PATH}" \
-        -L ${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT} \
+        -o AddressFamily=inet \
+        -o ExitOnForwardFailure=yes \
+        -L 127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT} \
         ${REMOTE_HOST}
 
     if [ $? -ne 0 ]; then
@@ -107,33 +236,79 @@ run_argo() {
         exit 1
     fi
 
-    echo -e "${GREEN}SSH tunnel established (port ${TUNNEL_LOCAL_PORT})!${NC}"
+    # Verify the forward is actually listening before we trust ssh -f's exit code.
+    if command -v ss >/dev/null 2>&1; then
+        LISTEN_CHECK="ss -tln"
+    else
+        LISTEN_CHECK="lsof -iTCP:${TUNNEL_LOCAL_PORT} -sTCP:LISTEN -n -P"
+    fi
+    if ! ${LISTEN_CHECK} 2>/dev/null | grep -q ":${TUNNEL_LOCAL_PORT}\b"; then
+        echo -e "${RED}SSH tunnel appears not to be listening on 127.0.0.1:${TUNNEL_LOCAL_PORT}.${NC}"
+        exit 1
+    fi
 
-    # Step 2: Start local proxy
+    echo -e "${GREEN}SSH tunnel established (127.0.0.1:${TUNNEL_LOCAL_PORT})!${NC}"
+
+    # Step 2: Start local proxy on a probed free port (retry a few times in
+    # case another process grabs the port between the probe and the bind).
     echo -e "${YELLOW}Starting local proxy...${NC}"
 
-    python3 "${SCRIPT_DIR}/claude-argo-proxy.py" &
-    PROXY_PID=$!
+    PROXY_PORT=""
+    PROXY_START="${ARGO_PROXY_PORT:-8083}"
+    for _attempt in 1 2 3; do
+        PROXY_PORT="$(find_free_port "${PROXY_START}")"
+        if [ -z "${PROXY_PORT}" ]; then
+            break
+        fi
+        ARGO_PROXY_LISTEN_PORT="${PROXY_PORT}" \
+            ARGO_PROXY_TARGET_PORT="${TUNNEL_LOCAL_PORT}" \
+            ARGO_PROXY_TARGET_HOST="${TUNNEL_REMOTE_HOST}" \
+            python3.12 "${SCRIPT_DIR}/claude-argo-proxy.py" &
+        PROXY_PID=$!
+        sleep 2
+        if kill -0 ${PROXY_PID} 2>/dev/null; then
+            break
+        fi
+        PROXY_PID=""
+        PROXY_START=$((PROXY_PORT + 1))
+    done
 
-    sleep 2
-
-    if ! kill -0 ${PROXY_PID} 2>/dev/null; then
+    if [ -z "${PROXY_PID}" ]; then
         echo -e "${RED}Local proxy failed to start. Is aiohttp installed? (pip install aiohttp)${NC}"
         exit 1
     fi
 
     echo -e "${GREEN}Local proxy running (port ${PROXY_PORT})!${NC}"
 
-    # Step 3: Launch Claude Code
     # Identity precedence: --identity > $ARGO_USER > $USER
     ARGO_IDENTITY="${IDENTITY:-${ARGO_USER:-$USER}}"
+
+    # Step 3: Discover the model catalog through the proxy and pick the best
+    # Opus / Sonnet / Haiku. ARGO_MODEL / ARGO_SMALL_FAST_MODEL short-circuit.
+    AVAILABLE_IDS=""
+    if [ -z "${ARGO_MODEL}" ] || [ -z "${ARGO_SMALL_FAST_MODEL}" ]; then
+        echo -e "${YELLOW}Querying Argo for available models...${NC}"
+        AVAILABLE_IDS="$(curl -sS --max-time 10 \
+            -H "Authorization: Bearer ${ARGO_IDENTITY}" \
+            -H "anthropic-version: 2023-06-01" \
+            "http://127.0.0.1:${PROXY_PORT}/argoapi/v1/models" 2>/dev/null | extract_model_ids)"
+        if [ -z "${AVAILABLE_IDS}" ]; then
+            echo -e "${YELLOW}Model discovery failed (endpoint may not expose /v1/models); set ARGO_MODEL to pin one.${NC}"
+        fi
+    fi
+    pick_best_models
+    build_model_env "${ARGO_MODEL}" "${ARGO_SMALL_FAST_MODEL}"
+
+    # Step 4: Launch Claude Code
     # Default to the inline renderer — friendlier over multi-hop SSH (e.g. compute
     # nodes), and preserves Claude's output in scrollback. User can override.
     echo -e "${GREEN}Launching Claude Code as ${ARGO_IDENTITY}...${NC}"
-    ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}/argoapi/" \
+    env \
+        ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}/argoapi/" \
         ANTHROPIC_AUTH_TOKEN="${ARGO_IDENTITY}" \
         CLAUDE_CODE_SKIP_ANTHROPIC_AUTH=1 \
         CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=${CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN:-1} \
+        "${MODEL_ENV[@]}" \
         ${CLAUDE_EXECUTABLE}
 
     # The cleanup function will be called automatically by the trap on exit
@@ -178,13 +353,7 @@ run_asksage() {
             -H "anthropic-version: 2023-06-01" \
             "${ASKSAGE_BASE_URL}/v1/models" 2>/dev/null)"
         if [ -n "${MODELS_JSON}" ] && command -v python3 >/dev/null 2>&1; then
-            AVAILABLE_IDS="$(printf '%s' "${MODELS_JSON}" | python3 -c '
-import json, sys
-try:
-    print("\n".join(m.get("id","") for m in json.load(sys.stdin).get("data", []) if m.get("id")))
-except Exception:
-    pass
-' 2>/dev/null)"
+            AVAILABLE_IDS="$(printf '%s' "${MODELS_JSON}" | extract_model_ids)"
         fi
     fi
 
@@ -222,39 +391,21 @@ except Exception:
         fi
     fi
 
-    # Pick the main model from the catalog. When adaptive thinking is
-    # supported, take the most-capable model. When it isn't, prefer
+    # Rank the catalog and pick the best Opus / Sonnet / Haiku. When the
+    # backend rejects adaptive thinking, restrict candidates to
     # opus-4-6 / sonnet-4-6 — the only family where
     # CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING actually has effect — falling
-    # back to any non-4-7 model, then to the first available.
-    if [ -z "${ASKSAGE_MODEL}" ] && [ -n "${AVAILABLE_IDS}" ]; then
-        if [ "${ADAPTIVE_OK}" = "1" ]; then
-            ASKSAGE_MODEL="$(printf '%s\n' "${AVAILABLE_IDS}" | head -1)"
-        else
-            ASKSAGE_MODEL="$(printf '%s\n' "${AVAILABLE_IDS}" | grep -E 'opus-4-6|sonnet-4-6' | head -1)"
-            [ -z "${ASKSAGE_MODEL}" ] && ASKSAGE_MODEL="$(printf '%s\n' "${AVAILABLE_IDS}" | grep -v '4-7' | head -1)"
-            [ -z "${ASKSAGE_MODEL}" ] && ASKSAGE_MODEL="$(printf '%s\n' "${AVAILABLE_IDS}" | head -1)"
-            FIRST_ID="$(printf '%s\n' "${AVAILABLE_IDS}" | head -1)"
-            if [ "${ASKSAGE_MODEL}" != "${FIRST_ID}" ]; then
-                echo -e "${YELLOW}Skipping ${FIRST_ID}: requires adaptive thinking, which this backend rejects.${NC}"
-            fi
+    # back to any non-4-7 model, then to the full catalog.
+    if [ "${ADAPTIVE_OK}" != "1" ] && [ -n "${AVAILABLE_IDS}" ]; then
+        LEGACY_IDS="$(printf '%s\n' "${AVAILABLE_IDS}" | grep -E 'opus-4-6|sonnet-4-6|haiku')"
+        [ -z "${LEGACY_IDS}" ] && LEGACY_IDS="$(printf '%s\n' "${AVAILABLE_IDS}" | grep -v '4-7')"
+        if [ -n "${LEGACY_IDS}" ] && [ "${LEGACY_IDS}" != "${AVAILABLE_IDS}" ]; then
+            echo -e "${YELLOW}Restricting to legacy-thinking models: this backend rejects adaptive thinking.${NC}"
+            AVAILABLE_IDS="${LEGACY_IDS}"
         fi
     fi
-    if [ -z "${ASKSAGE_SMALL_FAST_MODEL}" ] && [ -n "${AVAILABLE_IDS}" ]; then
-        ASKSAGE_SMALL_FAST_MODEL="$(printf '%s\n' "${AVAILABLE_IDS}" | grep -i 'haiku' | head -1)"
-    fi
-
-    MODEL_ENV=()
-    if [ -n "${ASKSAGE_MODEL}" ]; then
-        MODEL_ENV+=("ANTHROPIC_MODEL=${ASKSAGE_MODEL}")
-        echo -e "${GREEN}Using main model: ${ASKSAGE_MODEL}${NC}"
-    else
-        echo -e "${YELLOW}Could not discover a main model; Claude Code will use its default (may fail against this backend).${NC}"
-    fi
-    if [ -n "${ASKSAGE_SMALL_FAST_MODEL}" ]; then
-        MODEL_ENV+=("ANTHROPIC_SMALL_FAST_MODEL=${ASKSAGE_SMALL_FAST_MODEL}")
-        echo -e "${GREEN}Using small/fast model: ${ASKSAGE_SMALL_FAST_MODEL}${NC}"
-    fi
+    pick_best_models
+    build_model_env "${ASKSAGE_MODEL}" "${ASKSAGE_SMALL_FAST_MODEL}"
 
     echo -e "${GREEN}Launching Claude Code against AskSage (${ASKSAGE_BASE_URL})...${NC}"
     env \
@@ -271,6 +422,22 @@ if [ -z "${BACKEND}" ]; then
     echo -e "${RED}--backend is required.${NC}" >&2
     echo -e "${YELLOW}Use --backend=argo or --backend=asksage${NC}" >&2
     exit 1
+fi
+
+maybe_update_claude
+
+# Auto-install the Claude Code config bundle (operating rules + context
+# guard + status line, see claude-config/) on first launch per machine. The
+# installer is idempotent and non-destructive; the sentinel is the rules
+# import in ~/.claude/CLAUDE.md. Opt out with CLAUDE_CONFIG_AUTOINSTALL=0 or
+# by creating ~/.claude/.skip-argo-shim-config (so an uninstall sticks).
+if [ "${CLAUDE_CONFIG_AUTOINSTALL:-1}" != "0" ] \
+    && [ ! -e "${HOME}/.claude/.skip-argo-shim-config" ] \
+    && ! grep -qsF "claude-config/CLAUDE.md" "${HOME}/.claude/CLAUDE.md" 2>/dev/null; then
+    echo -e "${YELLOW}Claude Code config bundle not installed on this machine; installing...${NC}"
+    if ! bash "${SCRIPT_DIR}/install-claude-config.sh"; then
+        echo -e "${YELLOW}Config install failed; continuing without it (run install-claude-config.sh manually to retry).${NC}"
+    fi
 fi
 
 case "${BACKEND}" in
