@@ -1,6 +1,0 @@
-anthropic
-discord.py
-PyGithub
-httpx
-pdfplumber
-beautifulsoup4
