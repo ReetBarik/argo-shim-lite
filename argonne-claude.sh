@@ -8,9 +8,17 @@ IDENTITY=""
 # /model opus | /model sonnet aliases, so switching mid-session is instant.
 TIER="${CLAUDE_TIER:-plan}"
 
-# Parse args. Only --backend / --identity / --tier are consumed; anything else is ignored.
+# Parse args. Only --backend / --identity / --tier are consumed; everything
+# after `--` is forwarded verbatim to claude (e.g. `-- -p "task"` for headless
+# one-shot runs over ssh); anything else is ignored.
+CLAUDE_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
+        --)
+            shift
+            CLAUDE_ARGS=("$@")
+            break
+            ;;
         --backend=*)
             BACKEND="${1#--backend=}"
             shift
@@ -181,24 +189,50 @@ run_argo() {
         ARGO_SSH_JUMP="${ARGO_AURORA_UAN},logins.cels.anl.gov"
     fi
 
-    # SSH ControlMaster settings
-    CONTROL_PATH="/tmp/ssh-argo-claude-$$"
+    # SSH ControlMaster settings. Default: a private per-run master, torn down
+    # on exit. Set ARGO_SSH_CONTROL_PATH to use a fixed, persistent master
+    # instead: created on first use (one MFA), reused by every later run --
+    # each run only adds and cancels its own port forward, never the master.
+    # This is what lets an agent drive repeated headless runs (`-- -p ...`)
+    # with a human authenticating once, not once per run.
+    if [ -n "${ARGO_SSH_CONTROL_PATH:-}" ]; then
+        CONTROL_PATH="${ARGO_SSH_CONTROL_PATH}"
+        CONTROL_SHARED=1
+    else
+        CONTROL_PATH="/tmp/ssh-argo-claude-$$"
+        CONTROL_SHARED=0
+    fi
 
     # Track PIDs for cleanup
     PROXY_PID=""
+    FORWARD_SPEC=()
 
     cleanup() {
-        echo -e "\n${YELLOW}Cleaning up...${NC}"
+        # Preserve the status of whatever just ran (normally the claude
+        # process) -- a headless driver must be able to see claude fail.
+        local rc=$?
+        # Chatter goes to stderr so it can never contaminate claude's stdout
+        # (e.g. --output-format json piped from a `-- -p` run).
+        echo -e "\n${YELLOW}Cleaning up...${NC}" >&2
 
         if [ -n "${PROXY_PID}" ]; then
             kill ${PROXY_PID} 2>/dev/null
         fi
 
-        # Close the SSH tunnel via control socket
-        ssh -O exit -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null || true
+        # Close the SSH tunnel via control socket. On a shared master, cancel
+        # only this run's forward and leave the master (and its one MFA) alive.
+        # FORWARD_SPEC is non-empty only after the forward was actually
+        # established, so a failed add never cancels anything.
+        if [ "${CONTROL_SHARED}" = "1" ]; then
+            if [ ${#FORWARD_SPEC[@]} -gt 0 ]; then
+                ssh -O cancel "${FORWARD_SPEC[@]}" -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null || true
+            fi
+        else
+            ssh -O exit -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null || true
+        fi
 
-        echo -e "${GREEN}Done!${NC}"
-        exit 0
+        echo -e "${GREEN}Done!${NC}" >&2
+        exit "${rc}"
     }
 
     trap cleanup SIGINT SIGTERM EXIT
@@ -222,18 +256,37 @@ run_argo() {
         echo -e "${YELLOW}Using SSH jump chain: ${ARGO_SSH_JUMP}${NC}"
     fi
 
-    ssh -f -N \
-        "${SSH_JUMP_OPTS[@]}" \
-        -o ControlMaster=yes \
-        -o ControlPath="${CONTROL_PATH}" \
-        -o AddressFamily=inet \
-        -o ExitOnForwardFailure=yes \
-        -L 127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT} \
-        ${REMOTE_HOST}
+    # Assigned to FORWARD_SPEC only once the forward actually exists, so the
+    # cleanup trap on a failed attempt has nothing to cancel.
+    WANT_FORWARD=(-L "127.0.0.1:${TUNNEL_LOCAL_PORT}:${TUNNEL_REMOTE_HOST}:${TUNNEL_REMOTE_PORT}")
 
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}SSH tunnel failed to start. Check your credentials and MFA.${NC}"
-        exit 1
+    if [ "${CONTROL_SHARED}" = "1" ] \
+        && ssh -O check -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST} 2>/dev/null; then
+        # Persistent master already authenticated -- just add this run's forward.
+        echo -e "${GREEN}Reusing persistent SSH master (${CONTROL_PATH}) -- no MFA needed.${NC}"
+        if ! ssh -O forward "${WANT_FORWARD[@]}" -o ControlPath="${CONTROL_PATH}" ${REMOTE_HOST}; then
+            echo -e "${RED}Failed to add port forward on the persistent master.${NC}"
+            exit 1
+        fi
+        FORWARD_SPEC=("${WANT_FORWARD[@]}")
+    else
+        # A dead socket left by a lost connection makes `ssh -M` refuse to
+        # create a fresh master at the same path; -O check above said it's dead.
+        [ -S "${CONTROL_PATH}" ] && rm -f "${CONTROL_PATH}"
+        ssh -f -N \
+            "${SSH_JUMP_OPTS[@]}" \
+            -o ControlMaster=yes \
+            -o ControlPath="${CONTROL_PATH}" \
+            -o AddressFamily=inet \
+            -o ExitOnForwardFailure=yes \
+            "${WANT_FORWARD[@]}" \
+            ${REMOTE_HOST}
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}SSH tunnel failed to start. Check your credentials and MFA.${NC}"
+            exit 1
+        fi
+        FORWARD_SPEC=("${WANT_FORWARD[@]}")
     fi
 
     # Verify the forward is actually listening before we trust ssh -f's exit code.
@@ -309,7 +362,7 @@ run_argo() {
         CLAUDE_CODE_SKIP_ANTHROPIC_AUTH=1 \
         CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=${CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN:-1} \
         "${MODEL_ENV[@]}" \
-        ${CLAUDE_EXECUTABLE}
+        ${CLAUDE_EXECUTABLE} "${CLAUDE_ARGS[@]}"
 
     # The cleanup function will be called automatically by the trap on exit
 }
@@ -415,7 +468,7 @@ run_asksage() {
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
         NODE_EXTRA_CA_CERTS="${NODE_EXTRA_CA_CERTS:-$ASKSAGE_EXTRA_CA}" \
         "${MODEL_ENV[@]}" \
-        ${CLAUDE_EXECUTABLE}
+        ${CLAUDE_EXECUTABLE} "${CLAUDE_ARGS[@]}"
 }
 
 if [ -z "${BACKEND}" ]; then
